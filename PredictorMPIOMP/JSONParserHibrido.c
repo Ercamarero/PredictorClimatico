@@ -29,7 +29,7 @@ void cambiar_comas_por_puntos(char *str) {
 Descripción:
     -Funcion que genera la variable independiente en este caso los dias
 Parametros:
-    -int total: Cantidad de registros en nuestro JSON 
+    -int total: Cantidad de registros en nuestro JSON
 */
 float *array_auxiliar_dias(int total) {
     float *dias = malloc(total * sizeof(float));
@@ -44,12 +44,11 @@ float *array_auxiliar_dias(int total) {
     }
     return dias;
 }
-
 /*
 Descripción:
-    -Funcion para cambiar valores no numericos a formato float 
+    -Funcion que altera datos no numericos como los que pueden aparecer en las precipitaciones.
 Parametros:
-    -CJSON *valor: Fichero JSON a procesar 
+    -cJSON *valor: el fichero fuente que recibimos como input
 */
 float convertir_valor(cJSON *valor) {
     if (valor == NULL) return 0.0f;
@@ -73,7 +72,6 @@ float convertir_valor(cJSON *valor) {
 }
 
 int main(int argc, char *argv[]) {
-    //INICIO MPI 
     MPI_Init(&argc, &argv);
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -84,194 +82,163 @@ int main(int argc, char *argv[]) {
         MPI_Finalize();
         return EXIT_FAILURE;
     }
+
     // Variables
+    char *file_data = NULL;
+    long file_length = 0;
+    int num_campos = argc - 3;
+    char (*campos)[32] = NULL;
     cJSON *root = NULL;
-    char *data = NULL;
-    long length = 0;
+    int total_registros = 0;
     float **valores_completos = NULL;
-    float **valores_por_campo = NULL;
-    int *send_counts = NULL;
-    int *displs = NULL;
+    CampoDatosHibrido *datos_locales = NULL;
     int nh = atoi(argv[2]);
-    //Hilo 0 apertura y parsing del fichero. 
+
+    // Paso 1: Proceso 0 lee el archivo y broadcast a todos
     if (rank == 0) {
         FILE *file = fopen(argv[1], "rb");
         if (!file) {
             perror("Error al abrir el archivo");
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
+        
         fseek(file, 0, SEEK_END);
-        length = ftell(file);
+        file_length = ftell(file);
         fseek(file, 0, SEEK_SET);
-        data = (char *)calloc(length + 1, sizeof(char));
-        if (!data) {
+        
+        file_data = (char *)malloc(file_length + 1);
+        if (!file_data) {
             fclose(file);
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
-        if (fread(data, 1, length, file) != length) {
-            free(data);
+        
+        if (fread(file_data, 1, file_length, file) != file_length) {
+            free(file_data);
             fclose(file);
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
         fclose(file);
-        data[length] = '\0';
-        root = cJSON_Parse(data);
-        if (!root) {
-            fprintf(stderr, "Error al parsear JSON\n");
-            free(data);
+        file_data[file_length] = '\0';
+    }
+
+    // Broadcast tamaño del archivo
+    MPI_Bcast(&file_length, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+
+    // Otros procesos preparan buffer
+    if (rank != 0) {
+        file_data = (char *)malloc(file_length + 1);
+        if (!file_data) {
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
     }
 
-    //Establecer numero de campos a extraer.
-    int num_campos = argc - 3;
-    //Envio del numero de campos a los demas procesos 
-    MPI_Bcast(&num_campos, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    // Broadcast datos del archivo
+    MPI_Bcast(file_data, file_length + 1, MPI_CHAR, 0, MPI_COMM_WORLD);
 
-    //El proceso 0 obtiene el nombre de los campos a extraer los demas en caso de error abortan.
-    char (*campos)[32] = malloc(num_campos * 32 * sizeof(char));
-    if (!campos) {
-        if (rank == 0) {
-            cJSON_Delete(root);
-            free(data);
-        }
+    // Todos los procesos parsean el JSON
+    root = cJSON_Parse(file_data);
+    if (!root) {
+        fprintf(stderr, "Error al parsear JSON en proceso %d\n", rank);
+        free(file_data);
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
+    // Broadcast número de campos
+    MPI_Bcast(&num_campos, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Proceso 0 prepara nombres de campos
     if (rank == 0) {
+        campos = malloc(num_campos * 32 * sizeof(char));
+        if (!campos) {
+            cJSON_Delete(root);
+            free(file_data);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+        }
+        
         for (int i = 0; i < num_campos; i++) {
             strncpy(campos[i], argv[i + 3], 31);
             campos[i][31] = '\0';
         }
+    } else {
+        campos = malloc(num_campos * 32 * sizeof(char));
+        if (!campos) {
+            cJSON_Delete(root);
+            free(file_data);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+        }
     }
-    //Enviamos los campos a buscar
+
+    // Broadcast nombres de campos
     MPI_Bcast(campos, num_campos * 32, MPI_CHAR, 0, MPI_COMM_WORLD);
 
-    //Marcamos la cantidad de registros del JSON 
-    int total_registros = 0;
-    if (rank == 0) {
-        total_registros = cJSON_GetArraySize(root);
-    }
-    MPI_Bcast(&total_registros, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    //Si vacio = fin 
+    // Todos los procesos obtienen el número total de registros
+    total_registros = cJSON_GetArraySize(root);
     if (total_registros == 0) {
         if (rank == 0) {
             fprintf(stderr, "No hay registros para procesar\n");
-            cJSON_Delete(root);
-            free(data);
-            free(campos);
         }
+        cJSON_Delete(root);
+        free(file_data);
+        free(campos);
         MPI_Finalize();
         return EXIT_FAILURE;
     }
 
-    //Reparto de las lineas entre los distintos procesos.
+    // Distribución de trabajo
     int registros_por_rank = total_registros / size;
     int resto = total_registros % size;
     int inicio = rank * registros_por_rank + (rank < resto ? rank : resto);
     int fin = inicio + registros_por_rank + (rank < resto ? 1 : 0);
     int registros_locales = fin - inicio;
 
-    //Asignacion de hilos OMP 
+    // Configurar OpenMP
     omp_set_num_threads(nh);
 
-    //Preproceso de los envios 
-    if (rank == 0) {
-        send_counts = malloc(size * sizeof(int));
-        displs = malloc(size * sizeof(int));
-        if (!send_counts || !displs) {
-            free(send_counts);
-            free(displs);
-            cJSON_Delete(root);
-            free(data);
-            free(campos);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-        }
-
-        for (int i = 0; i < size; i++) {
-            int i_start = i * registros_por_rank + (i < resto ? i : resto);
-            int i_end = i_start + registros_por_rank + (i < resto ? 1 : 0);
-            send_counts[i] = i_end - i_start;
-            displs[i] = i_start;
-        }
-
-        valores_por_campo = malloc(num_campos * sizeof(float *));
-        if (!valores_por_campo) {
-            free(send_counts);
-            free(displs);
-            cJSON_Delete(root);
-            free(data);
-            free(campos);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-        }
-
-        for (int i = 0; i < num_campos; i++) {
-            valores_por_campo[i] = calloc(total_registros, sizeof(float));
-            if (!valores_por_campo[i]) {
-                for (int j = 0; j < i; j++) free(valores_por_campo[j]);
-                free(valores_por_campo);
-                free(send_counts);
-                free(displs);
-                cJSON_Delete(root);
-                free(data);
-                free(campos);
-                MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-            }
-        }
-    }
-    //Creamos los espacios para los struct que tendra cada proceso
-    CampoDatosHibrido *datos_locales = malloc(num_campos * sizeof(CampoDatosHibrido));
+    // Cada proceso procesa su parte del JSON
+    datos_locales = malloc(num_campos * sizeof(CampoDatosHibrido));
     if (!datos_locales) {
-        if (rank == 0) {
-            for (int i = 0; i < num_campos; i++) free(valores_por_campo[i]);
-            free(valores_por_campo);
-            free(send_counts);
-            free(displs);
-            cJSON_Delete(root);
-            free(data);
-            free(campos);
-        }
-        MPI_Finalize();
-        return EXIT_FAILURE;
+        cJSON_Delete(root);
+        free(file_data);
+        free(campos);
+        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
     for (int i = 0; i < num_campos; i++) {
         strncpy(datos_locales[i].nombre, campos[i], 31);
         datos_locales[i].nombre[31] = '\0';
-        datos_locales[i].valores = calloc(registros_locales, sizeof(float));
+        datos_locales[i].valores = malloc(registros_locales * sizeof(float));
         datos_locales[i].cantidad = registros_locales;
-
+        
         if (!datos_locales[i].valores) {
             for (int j = 0; j < i; j++) free(datos_locales[j].valores);
             free(datos_locales);
-            if (rank == 0) {
-                for (int j = 0; j < num_campos; j++) free(valores_por_campo[j]);
-                free(valores_por_campo);
-                free(send_counts);
-                free(displs);
-                cJSON_Delete(root);
-                free(data);
-                free(campos);
+            cJSON_Delete(root);
+            free(file_data);
+            free(campos);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+        }
+
+        #pragma omp parallel for
+        for (int j = 0; j < registros_locales; j++) {
+            cJSON *item = cJSON_GetArrayItem(root, inicio + j);
+            if (item) {
+                cJSON *valor = cJSON_GetObjectItem(item, campos[i]);
+                datos_locales[i].valores[j] = convertir_valor(valor);
+            } else {
+                datos_locales[i].valores[j] = 0.0f;
             }
-            MPI_Finalize();
-            return EXIT_FAILURE;
         }
     }
 
+    // Proceso 0 prepara buffers para reunir los datos
     if (rank == 0) {
         valores_completos = malloc(num_campos * sizeof(float *));
         if (!valores_completos) {
-            for (int i = 0; i < num_campos; i++) {
-                free(datos_locales[i].valores);
-                free(valores_por_campo[i]);
-            }
-            free(datos_locales);
-            free(valores_por_campo);
-            free(send_counts);
-            free(displs);
             cJSON_Delete(root);
-            free(data);
+            free(file_data);
             free(campos);
+            for (int i = 0; i < num_campos; i++) free(datos_locales[i].valores);
+            free(datos_locales);
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
 
@@ -280,77 +247,55 @@ int main(int argc, char *argv[]) {
             if (!valores_completos[i]) {
                 for (int j = 0; j < i; j++) free(valores_completos[j]);
                 free(valores_completos);
-                for (int j = 0; j < num_campos; j++) {
-                    free(datos_locales[j].valores);
-                    free(valores_por_campo[j]);
-                }
-                free(datos_locales);
-                free(valores_por_campo);
-                free(send_counts);
-                free(displs);
                 cJSON_Delete(root);
-                free(data);
+                free(file_data);
                 free(campos);
+                for (int j = 0; j < num_campos; j++) free(datos_locales[j].valores);
+                free(datos_locales);
                 MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-            }
-
-            #pragma omp parallel for
-            for (int j = 0; j < total_registros; j++) {
-                cJSON *item = cJSON_GetArrayItem(root, j);
-                if (item) {
-                    cJSON *valor = cJSON_GetObjectItem(item, campos[i]);
-                    valores_completos[i][j] = convertir_valor(valor);
-                } else {
-                    valores_completos[i][j] = 0.0f;
-                }
             }
         }
     }
-    //Envio y recoleccion
-    for (int i = 0; i < num_campos; i++) {
-        MPI_Scatterv(
-            rank == 0 ? valores_completos[i] : NULL,
-            send_counts,
-            displs,
-            MPI_FLOAT,
-            datos_locales[i].valores,
-            registros_locales,
-            MPI_FLOAT,
-            0,
-            MPI_COMM_WORLD
-        );
 
+    // Reunir los datos en el proceso 0
+    int *recv_counts = malloc(size * sizeof(int));
+    int *displs = malloc(size * sizeof(int));
+    
+    for (int i = 0; i < size; i++) {
+        int i_start = i * registros_por_rank + (i < resto ? i : resto);
+        int i_end = i_start + registros_por_rank + (i < resto ? 1 : 0);
+        recv_counts[i] = i_end - i_start;
+        displs[i] = i_start;
+    }
+
+    for (int i = 0; i < num_campos; i++) {
         MPI_Gatherv(
             datos_locales[i].valores,
             registros_locales,
             MPI_FLOAT,
-            rank == 0 ? valores_por_campo[i] : NULL,
-            send_counts,
+            rank == 0 ? valores_completos[i] : NULL,
+            recv_counts,
             displs,
             MPI_FLOAT,
             0,
             MPI_COMM_WORLD
         );
     }
-    //Procesamiento
-    if (rank == 0) {
-        for (int i = 0; i < num_campos; i++) {
-            free(valores_completos[i]);
-        }
-        free(valores_completos);
 
+    // Procesamiento en el proceso 0
+    if (rank == 0) {
         float *dias_transcurridos = array_auxiliar_dias(total_registros);
         
-        // Linear Regression for each field
+        // Regresión Lineal para cada campo
         for (int i = 0; i < num_campos; i++) {
             float b0, b1;
-            linear_regression(dias_transcurridos, valores_por_campo[i], total_registros, &b1, &b0);
+            linear_regression(dias_transcurridos, valores_completos[i], total_registros, &b1, &b0);
             float prediccion = b0 + b1 * (total_registros + 1);
             printf("Regresión Lineal - Previsión %s día %d: %.2f\n", 
                    campos[i], total_registros + 1, prediccion);
         }
         
-        // ARIMA Models - Apply each model to all fields
+        // Modelos ARIMA
         ARIMA_Model modelos_arima[] = {
             {1, 0, 0},  // AR(1)
         };
@@ -369,8 +314,8 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
                 
-                fit_arima(valores_por_campo[i], total_registros, &modelo, params);
-                float prediccion = forecast_arima(valores_por_campo[i], total_registros, &modelo, params);
+                fit_arima(valores_completos[i], total_registros, &modelo, params);
+                float prediccion = forecast_arima(valores_completos[i], total_registros, &modelo, params);
                 printf("  Campo %s - Previsión día %d: %.2f\n", 
                        campos[i], total_registros + 1, prediccion);
                 
@@ -380,23 +325,21 @@ int main(int argc, char *argv[]) {
 
         free(dias_transcurridos);
         for (int i = 0; i < num_campos; i++) {
-            free(valores_por_campo[i]);
+            free(valores_completos[i]);
         }
-        free(valores_por_campo);
+        free(valores_completos);
     }
 
+    // Limpieza
     for (int i = 0; i < num_campos; i++) {
         free(datos_locales[i].valores);
     }
     free(datos_locales);
     free(campos);
-
-    if (rank == 0) {
-        free(send_counts);
-        free(displs);
-        cJSON_Delete(root);
-        free(data);
-    }
+    free(recv_counts);
+    free(displs);
+    cJSON_Delete(root);
+    free(file_data);
 
     MPI_Finalize();
     return EXIT_SUCCESS;
