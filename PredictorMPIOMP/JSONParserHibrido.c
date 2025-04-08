@@ -13,24 +13,12 @@ typedef struct {
     int cantidad;
 } CampoDatosHibrido;
 
-/*
-Descripción:
-    -Funcion para estilizar los datos  del JSON para que se puedan usar.
-Parametros:
-    -char *str: cadena
-*/
 void cambiar_comas_por_puntos(char *str) {
     for (int i = 0; str[i]; i++) {
         if (str[i] == ',') str[i] = '.';
     }
 }
 
-/*
-Descripción:
-    -Funcion que genera la variable independiente en este caso los dias
-Parametros:
-    -int total: Cantidad de registros en nuestro JSON
-*/
 float *array_auxiliar_dias(int total) {
     float *dias = malloc(total * sizeof(float));
     if (dias == NULL) {
@@ -44,12 +32,7 @@ float *array_auxiliar_dias(int total) {
     }
     return dias;
 }
-/*
-Descripción:
-    -Funcion que altera datos no numericos como los que pueden aparecer en las precipitaciones.
-Parametros:
-    -cJSON *valor: el fichero fuente que recibimos como input
-*/
+
 float convertir_valor(cJSON *valor) {
     if (valor == NULL) return 0.0f;
 
@@ -94,7 +77,7 @@ int main(int argc, char *argv[]) {
     CampoDatosHibrido *datos_locales = NULL;
     int nh = atoi(argv[2]);
 
-    // Paso 1: Proceso 0 lee el archivo y broadcast a todos
+    // Paso 1: Solo el proceso 0 lee y parsea el archivo
     if (rank == 0) {
         FILE *file = fopen(argv[1], "rb");
         if (!file) {
@@ -119,28 +102,29 @@ int main(int argc, char *argv[]) {
         }
         fclose(file);
         file_data[file_length] = '\0';
-    }
 
-    // Broadcast tamaño del archivo
-    MPI_Bcast(&file_length, 1, MPI_LONG, 0, MPI_COMM_WORLD);
-
-    // Otros procesos preparan buffer
-    if (rank != 0) {
-        file_data = (char *)malloc(file_length + 1);
-        if (!file_data) {
+        // Parsear JSON solo en rank 0
+        root = cJSON_Parse(file_data);
+        if (!root) {
+            fprintf(stderr, "Error al parsear JSON\n");
+            free(file_data);
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
+        total_registros = cJSON_GetArraySize(root);
     }
 
-    // Broadcast datos del archivo
-    MPI_Bcast(file_data, file_length + 1, MPI_CHAR, 0, MPI_COMM_WORLD);
-
-    // Todos los procesos parsean el JSON
-    root = cJSON_Parse(file_data);
-    if (!root) {
-        fprintf(stderr, "Error al parsear JSON en proceso %d\n", rank);
-        free(file_data);
-        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    // Broadcast número total de registros
+    MPI_Bcast(&total_registros, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    if (total_registros == 0) {
+        if (rank == 0) {
+            fprintf(stderr, "No hay registros para procesar\n");
+        }
+        if (rank == 0) {
+            cJSON_Delete(root);
+            free(file_data);
+        }
+        MPI_Finalize();
+        return EXIT_FAILURE;
     }
 
     // Broadcast número de campos
@@ -162,8 +146,6 @@ int main(int argc, char *argv[]) {
     } else {
         campos = malloc(num_campos * 32 * sizeof(char));
         if (!campos) {
-            cJSON_Delete(root);
-            free(file_data);
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
     }
@@ -171,20 +153,7 @@ int main(int argc, char *argv[]) {
     // Broadcast nombres de campos
     MPI_Bcast(campos, num_campos * 32, MPI_CHAR, 0, MPI_COMM_WORLD);
 
-    // Todos los procesos obtienen el número total de registros
-    total_registros = cJSON_GetArraySize(root);
-    if (total_registros == 0) {
-        if (rank == 0) {
-            fprintf(stderr, "No hay registros para procesar\n");
-        }
-        cJSON_Delete(root);
-        free(file_data);
-        free(campos);
-        MPI_Finalize();
-        return EXIT_FAILURE;
-    }
-
-    // Distribución de trabajo
+    // Distribución de trabajo optimizada
     int registros_por_rank = total_registros / size;
     int resto = total_registros % size;
     int inicio = rank * registros_por_rank + (rank < resto ? rank : resto);
@@ -194,11 +163,13 @@ int main(int argc, char *argv[]) {
     // Configurar OpenMP
     omp_set_num_threads(nh);
 
-    // Cada proceso procesa su parte del JSON
+    // Preparar estructuras para datos locales
     datos_locales = malloc(num_campos * sizeof(CampoDatosHibrido));
     if (!datos_locales) {
-        cJSON_Delete(root);
-        free(file_data);
+        if (rank == 0) {
+            cJSON_Delete(root);
+            free(file_data);
+        }
         free(campos);
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
@@ -212,30 +183,72 @@ int main(int argc, char *argv[]) {
         if (!datos_locales[i].valores) {
             for (int j = 0; j < i; j++) free(datos_locales[j].valores);
             free(datos_locales);
-            cJSON_Delete(root);
-            free(file_data);
+            if (rank == 0) {
+                cJSON_Delete(root);
+                free(file_data);
+            }
             free(campos);
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
+    }
 
+    // Proceso 0 envía los datos necesarios a cada proceso
+    if (rank == 0) {
+        // Procesar su propia parte primero
         #pragma omp parallel for
-        for (int j = 0; j < registros_locales; j++) {
-            cJSON *item = cJSON_GetArrayItem(root, inicio + j);
-            if (item) {
-                cJSON *valor = cJSON_GetObjectItem(item, campos[i]);
-                datos_locales[i].valores[j] = convertir_valor(valor);
-            } else {
-                datos_locales[i].valores[j] = 0.0f;
+        for (int i = 0; i < num_campos; i++) {
+            for (int j = 0; j < registros_locales; j++) {
+                cJSON *item = cJSON_GetArrayItem(root, inicio + j);
+                if (item) {
+                    cJSON *valor = cJSON_GetObjectItem(item, campos[i]);
+                    datos_locales[i].valores[j] = convertir_valor(valor);
+                } else {
+                    datos_locales[i].valores[j] = 0.0f;
+                }
             }
         }
+
+        // Enviar datos a otros procesos
+        for (int p = 1; p < size; p++) {
+            int p_inicio = p * registros_por_rank + (p < resto ? p : resto);
+            int p_fin = p_inicio + registros_por_rank + (p < resto ? 1 : 0);
+            int p_registros = p_fin - p_inicio;
+
+            for (int i = 0; i < num_campos; i++) {
+                float *temp_buffer = malloc(p_registros * sizeof(float));
+                
+                #pragma omp parallel for
+                for (int j = 0; j < p_registros; j++) {
+                    cJSON *item = cJSON_GetArrayItem(root, p_inicio + j);
+                    if (item) {
+                        cJSON *valor = cJSON_GetObjectItem(item, campos[i]);
+                        temp_buffer[j] = convertir_valor(valor);
+                    } else {
+                        temp_buffer[j] = 0.0f;
+                    }
+                }
+
+                MPI_Send(temp_buffer, p_registros, MPI_FLOAT, p, 0, MPI_COMM_WORLD);
+                free(temp_buffer);
+            }
+        }
+    } else {
+        // Otros procesos reciben sus datos
+        for (int i = 0; i < num_campos; i++) {
+            MPI_Recv(datos_locales[i].valores, registros_locales, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+    }
+
+    // Liberar memoria del JSON en rank 0
+    if (rank == 0) {
+        cJSON_Delete(root);
+        free(file_data);
     }
 
     // Proceso 0 prepara buffers para reunir los datos
     if (rank == 0) {
         valores_completos = malloc(num_campos * sizeof(float *));
         if (!valores_completos) {
-            cJSON_Delete(root);
-            free(file_data);
             free(campos);
             for (int i = 0; i < num_campos; i++) free(datos_locales[i].valores);
             free(datos_locales);
@@ -247,8 +260,6 @@ int main(int argc, char *argv[]) {
             if (!valores_completos[i]) {
                 for (int j = 0; j < i; j++) free(valores_completos[j]);
                 free(valores_completos);
-                cJSON_Delete(root);
-                free(file_data);
                 free(campos);
                 for (int j = 0; j < num_campos; j++) free(datos_locales[j].valores);
                 free(datos_locales);
@@ -338,8 +349,6 @@ int main(int argc, char *argv[]) {
     free(campos);
     free(recv_counts);
     free(displs);
-    cJSON_Delete(root);
-    free(file_data);
 
     MPI_Finalize();
     return EXIT_SUCCESS;
