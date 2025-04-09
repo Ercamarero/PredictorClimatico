@@ -94,6 +94,32 @@ Todos los modelos que se añadan a la estructura de modelos se ejecutaran para l
 - `sol` Incidencia ultravioleta.
 - `presmax` Presión atmosférica máxima.
 - `presmin` Presión atmosférica máxima.
+  
+## Salida
+
+```bash
+----------------------------------------
+Ejecutado en 4 procesos
+Input: ./datos.json
+Campos a analizar: tmax tmed tmin prec velmedia
+Numero de Hilos por proceso: 4
+----------------------------------------
+mpirun -np 4 ./PredictorHibrido ./datos.json 4 tmax tmed tmin prec velmedia
+Regresión Lineal - Previsión tmax día 143: 13.71
+Regresión Lineal - Previsión tmed día 143: 10.97
+Regresión Lineal - Previsión tmin día 143: 8.24
+Regresión Lineal - Previsión prec día 143: 6.48
+Regresión Lineal - Previsión velmedia día 143: 3.84
+
+Aplicando modelo ARIMA(1,0,0) a todos los campos:
+  Campo tmax - Previsión día 143: 6.70
+  Campo tmed - Previsión día 143: 5.40
+  Campo tmin - Previsión día 143: 4.15
+  Campo prec - Previsión día 143: 6.00
+  Campo velmedia - Previsión día 143: 3.45
+```
+
+La salida de este script proporciona los valores predecidos por ambos metodos de cálculo ademas de indicarte que valores han sido extraidos del `JSON`; por cortesia y facilidad de debug tambien indicamos que cantidad de procesos MPI e Hilos OMP se han generado en la ejecución.
 
 ## Referencias
 
