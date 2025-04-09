@@ -12,7 +12,6 @@ typedef struct
 } ARIMA_Model;
 
 // Funciones básicas
-__device__ float mean(float *array, int n);
 __global__ void linear_regression_kernel(float *x, float *y, int n, float *b1, float *b0);
 
 // Funciones ARIMA

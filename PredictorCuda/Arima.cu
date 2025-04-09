@@ -4,23 +4,6 @@
 
 /*
 Descripción:
-    -Funcion destinada a calcular la media de los valores pasados en un array. 
-Parametros:
-    -float *array: Suministro de datos.
-    -int n: Tamaño del array.
-*/
-__device__ float mean(float *array, int n)
-{
-    float sum = 0.0f;
-    for (int i = 0; i < n; i++)
-    {
-        sum += array[i];
-    }
-    return sum / n;
-}
-
-/*
-Descripción:
     -Funcion que realiza la Regresion lineal 
 Parametros:
     -float *x: Array de valores independientes ('Dias') 
@@ -61,6 +44,7 @@ __global__ void linear_regression_kernel(float *x, float *y, int n, float *b1, f
             sum_y += sy[s];
         }
     }
+
     float mean_x = sum_x / n;
     float mean_y = sum_y / n;
 

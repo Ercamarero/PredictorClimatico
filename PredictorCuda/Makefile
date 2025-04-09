@@ -142,7 +142,9 @@ run: build
 	./PredictorCuda $(DATOS) $(NHILOS) $(CAMPOS)
 
 clean:
+	@echo "Limpiando archivos generados..."
 	rm -f PredictorCuda *.o
+	@echo "Archivos generados eliminados."
 
 help:
 	@echo "Opciones Disponibles:"

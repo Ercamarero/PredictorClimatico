@@ -78,10 +78,10 @@ CampoDatos *extraer_campos_openmp(cJSON *array_json, char **campos, int num_camp
 #pragma omp parallel for
         for (int j = 0; j < *total_registros; j++)
         {
-            //Obtiene el conjunto completo contenido en {}
+            // Obtiene el conjunto completo contenido en {}
             cJSON *item = cJSON_GetArrayItem(array_json, j);
-            //obtiene la correlacion clave valor con respecto al campo buscado 
-            cJSON *valor = cJSON_GetObjectItem(item, campos[i]); 
+            // obtiene la correlacion clave valor con respecto al campo buscado
+            cJSON *valor = cJSON_GetObjectItem(item, campos[i]);
 
             if (valor)
             {
@@ -240,11 +240,10 @@ int main(int argc, char *argv[])
     checkCudaErrors(cudaMemcpy(d_dias, h_dias, total_registros * sizeof(float), cudaMemcpyHostToDevice));
 
     // Procesar cada campo
+    // Regresion Lineal
     for (int i = 0; i < num_campos; i++)
     {
         float *d_registros;
-
-        // Reservar memoria en el device
         checkCudaErrors(cudaMalloc((void **)&d_registros, total_registros * sizeof(float)));
         checkCudaErrors(cudaMemcpy(d_registros, datos[i].valores, total_registros * sizeof(float), cudaMemcpyHostToDevice));
 
@@ -256,26 +255,30 @@ int main(int argc, char *argv[])
         printf("Regresión Lineal - Previsión %s día %d: %.2f\n",
                campos[i], total_registros + 1, prediccion);
 
-        // modelo ARIMA
-        ARIMA_Model modelos_arima[] = {
-            {1, 0, 0},
-        };
+    }
 
-        int num_modelos = sizeof(modelos_arima) / sizeof(modelos_arima[0]);
+    // modelo ARIMA
+    ARIMA_Model modelos_arima[] = {
+        {1, 0, 0},
+    };
 
-        for (int m = 0; m < num_modelos; m++)
+    int num_modelos = sizeof(modelos_arima) / sizeof(modelos_arima[0]);
+
+    for(int m = 0; m < num_modelos; m++)
+    {   
+        printf("Modelo ARIMA(%d,%d,%d)\n", modelos_arima[m].p, modelos_arima[m].d, modelos_arima[m].q);
+        for(int i = 0; i < num_campos; i++)
         {
+            float *d_registros;
+            checkCudaErrors(cudaMalloc((void **)&d_registros, total_registros * sizeof(float)));
+            checkCudaErrors(cudaMemcpy(d_registros, datos[i].valores, total_registros * sizeof(float), cudaMemcpyHostToDevice));
             float arima_forecast;
             ARIMA_Model modelo = modelos_arima[m];
             perform_arima_forecast(d_registros, total_registros, &modelo, &arima_forecast);
-            printf("Aplicando modelo ARIMA(%d,%d,%d) - Previsión %s día %d: %.2f\n",
-                   modelo.p, modelo.d, modelo.q, campos[i], total_registros + 1, arima_forecast);
-
-            // Liberar registros.
-            cudaFree(d_registros);
+            printf("Previsión %s día %d: %.2f\n",
+                 campos[i], total_registros + 1, arima_forecast);
         }
     }
-
     // Liberamos memoria del device
     cudaFree(d_dias);
 
