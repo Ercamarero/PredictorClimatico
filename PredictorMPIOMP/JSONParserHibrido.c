@@ -13,12 +13,26 @@ typedef struct {
     int cantidad;
 } CampoDatosHibrido;
 
+/*
+Descripción:
+    -Funcion para estilizar los datos  del JSON para que se puedan usar.
+Parametros:
+    -char *str: cadena
+*/
 void cambiar_comas_por_puntos(char *str) {
     for (int i = 0; str[i]; i++) {
         if (str[i] == ',') str[i] = '.';
     }
 }
 
+/*
+Descripción:
+    -Funcion que genera la variable independiente en este caso los dias
+Parametros:
+    -int total: Cantidad de registros en nuestro JSON
+Retorno:
+    -float* dias: Array con los valores independientes 
+*/
 float *array_auxiliar_dias(int total) {
     float *dias = malloc(total * sizeof(float));
     if (dias == NULL) {
@@ -33,6 +47,14 @@ float *array_auxiliar_dias(int total) {
     return dias;
 }
 
+/*
+Descripción:
+    -Funcion que altera datos no numericos como los que pueden aparecer en las precipitaciones.
+Parametros:
+    -cJSON *valor: el fichero fuente que recibimos como input
+Return:
+    -Retorna un entero en la posición donde se detecto el error del JSON 
+*/
 float convertir_valor(cJSON *valor) {
     if (valor == NULL) return 0.0f;
 

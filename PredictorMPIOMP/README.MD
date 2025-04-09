@@ -1,6 +1,6 @@
 # Predictor Climático - Proyecto PAM
 
-Este `README` fue escrito para la compilación, modificación en caso de querer experimentar y uso del proyecto; es por ello que explicaremos detalles acerca del código y el `Makefile`.
+Este `README` fue escrito para la compilación, modificación en caso de querer experimentar y usar el proyecto; es por ello que explicaremos detalles acerca del código y el `Makefile`.
 Junto con este boletín se adjunta un `Makefile` que automatiza todos los comandos que deberíais de necesitar para la comprensión y utilización del entorno.
 
 ## Jerarquía de ficheros

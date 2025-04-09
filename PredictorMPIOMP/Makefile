@@ -36,8 +36,9 @@ run: $(TARGET)
 	mpirun -np $(NP) ./$(TARGET) $(DATOS) $(NHILOS) $(CAMPOS)
 
 clean:
+	@echo "Limpiando archivos generados..."
 	rm -f $(TARGET) *.o
-
+	@echo "Archivos generados eliminados."
 help:
 	@echo "Opciones Disponibles:"
 	@echo "  all       - Build (default)"
