@@ -41,3 +41,7 @@ make requirements
 ```
 
 Este módulo depende de Numpy es por ello que en caso de no tenerlo instalado en tu maquina puedes usar el `make requirements` para descargar dicha librería.
+
+## Salida
+
+La salida de este script es un fichero tipo JSON que mantiene el esquema de aquellos que utiliza la AEMET en su API.
