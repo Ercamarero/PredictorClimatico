@@ -93,6 +93,30 @@ Todos los modelos que se añadan a la estructura de modelos se ejecutaran para l
 - `sol` Incidencia ultravioleta.
 - `presmax` Presión atmosférica máxima.
 - `presmin` Presión atmosférica máxima.
+  
+## Salida
+
+```bash
+----------------------------------------
+Input: ./datosEx.json
+Campos a analizar: tmax tmed tmin prec velmedia
+Numero de Hilos por proceso: 4
+----------------------------------------
+./PredictorCuda ./datosEx.json 4 tmax tmed tmin prec velmedia
+Regresión Lineal - Previsión tmax día 3973: 398.05
+Regresión Lineal - Previsión tmed día 3973: 331.71
+Regresión Lineal - Previsión tmin día 3973: 265.42
+Regresión Lineal - Previsión prec día 3973: 92.73
+Regresión Lineal - Previsión velmedia día 3973: 81.93
+Modelo ARIMA(1,0,0)
+Previsión tmax día 3973: 14.72
+Previsión tmed día 3973: 12.32
+Previsión tmin día 3973: 9.92
+Previsión prec día 3973: 3.76
+Previsión velmedia día 3973: 2.80
+```
+
+La salida de este script proporciona los valores predecidos por ambos metodos de cálculo ademas de indicarte que valores han sido extraidos del `JSON`; por cortesia y facilidad de debug tambien indicamos que cantidad de Hilos OMP se han generado en la ejecución.
 
 ## Referencias
 
